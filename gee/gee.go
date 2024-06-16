@@ -2,17 +2,14 @@ package gee
 
 import (
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
+
+	"github.com/gee-coder/gee/render"
 )
 
 const ANY = "ANY"
-
-// 请求上下文
-type Context struct {
-	W http.ResponseWriter
-	R *http.Request
-}
 
 // 方法
 type HandlerFunc func(ctx *Context)
@@ -131,16 +128,22 @@ func (r *router) Group(name string) *routerGroup {
 // 引擎
 type Engine struct {
 	router
+	funcMap    template.FuncMap
+	HTMLRender render.HTMLRender
 }
 
-func New() *Engine {
-	return &Engine{
-		router{},
-	}
+func (e *Engine) SetFuncMap(funcMap template.FuncMap) {
+	e.funcMap = funcMap
 }
 
-func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	e.httpRequestHandle(w, r)
+func (e *Engine) SetHtmlTemplate(t *template.Template) {
+	e.HTMLRender = render.HTMLRender{Template: t}
+}
+
+// LoadTemplateGlob 加载所有模板
+func (e *Engine) LoadTemplate(pattern string) {
+	t := template.Must(template.New("").Funcs(e.funcMap).ParseGlob(pattern))
+	e.SetHtmlTemplate(t)
 }
 
 func (e *Engine) httpRequestHandle(w http.ResponseWriter, r *http.Request) {
@@ -152,8 +155,9 @@ func (e *Engine) httpRequestHandle(w http.ResponseWriter, r *http.Request) {
 		if node != nil && node.isEnd {
 			// 路由匹配上了
 			ctx := &Context{
-				W: w,
-				R: r,
+				W:      w,
+				R:      r,
+				engine: e,
 			}
 			handle, ok := group.handlerMap[node.routerName][ANY]
 			if ok {
@@ -174,10 +178,20 @@ func (e *Engine) httpRequestHandle(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%s  not found \n", r.RequestURI)
 }
 
+func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	e.httpRequestHandle(w, r)
+}
+
 func (e *Engine) Run() {
 	http.Handle(SEPARATOR, e)
 	err := http.ListenAndServe(":8111", nil)
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+func New() *Engine {
+	return &Engine{
+		router: router{},
 	}
 }
