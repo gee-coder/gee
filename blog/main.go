@@ -10,8 +10,12 @@ import (
 )
 
 type User struct {
-	Name string `xml:"name"`
-	Age  int    `xml:"age"`
+	Name      string   `xml:"name" json:"name"`
+	Age       int      `xml:"age" json:"age" validate:"required,max=50,min=18"`
+	Sex       int      `xml:"sex" json:"sex"`
+	Phone     string   `xml:"phone" json:"phone"`
+	Email     string   `xml:"email" json:"email" gee:"required"`
+	Addresses []string `xml:"addresses" json:"addresses"`
 }
 
 func Log(next gee.HandlerFunc) gee.HandlerFunc {
@@ -160,6 +164,68 @@ func main() {
 	group.Get("/file/fs", func(ctx *gee.Context) {
 		fmt.Println("handler")
 		ctx.FileFromFS("test.xlsx", http.Dir("tpl"))
+	})
+
+	// query参数
+	group.Get("/add", func(ctx *gee.Context) {
+		fmt.Println("handler")
+		id := ctx.GetQuery("id")
+		fmt.Println(id)
+	})
+	group.Get("/add2", func(ctx *gee.Context) {
+		fmt.Println("handler")
+		id := ctx.DefaultQuery("id", "-1")
+		fmt.Println(id)
+	})
+
+	// map
+	group.Get("/queryMap", func(ctx *gee.Context) {
+		m, _ := ctx.GetQueryMap("user")
+		ctx.JSON(http.StatusOK, m)
+	})
+
+	// form
+	group.Post("/formPost", func(ctx *gee.Context) {
+		m, _ := ctx.GetPostFormMap("user")
+		files := ctx.FormFiles("file")
+		for _, file := range files {
+			ctx.SaveUploadedFile(file, "./upload/"+file.Filename)
+		}
+		ctx.JSON(http.StatusOK, m)
+	})
+
+	// json
+	group.Post("/jsonParam", func(ctx *gee.Context) {
+		user := &User{}
+		ctx.DisallowUnknownFields = true
+		ctx.IsValidate = true
+		err := ctx.BindJson(user)
+		if err == nil {
+			ctx.JSON(http.StatusOK, user)
+		} else {
+			log.Println(err)
+		}
+	})
+	group.Post("/jsonParam2", func(ctx *gee.Context) {
+		user := make([]User, 0)
+		ctx.DisallowUnknownFields = true
+		ctx.IsValidate = true
+		err := ctx.BindJson(&user)
+		if err == nil {
+			ctx.JSON(http.StatusOK, user)
+		} else {
+			log.Println(err)
+		}
+	})
+
+	group.Post("/xmlParam", func(ctx *gee.Context) {
+		user := &User{}
+		err := ctx.BindXML(user)
+		if err == nil {
+			ctx.JSON(http.StatusOK, user)
+		} else {
+			log.Println(err)
+		}
 	})
 
 	engine.Run()

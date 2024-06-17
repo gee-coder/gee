@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gee-coder/gee/render"
 )
@@ -130,6 +131,9 @@ type Engine struct {
 	router
 	funcMap    template.FuncMap
 	HTMLRender render.HTMLRender
+	// sync.Pool用于存储分配了还没被使用但未来可能被使用的值
+	// sync.Pool大小可伸缩，会动态扩容，池中不活跃的对象会被自动清理
+	pool sync.Pool
 }
 
 func (e *Engine) SetFuncMap(funcMap template.FuncMap) {
@@ -146,40 +150,45 @@ func (e *Engine) LoadTemplate(pattern string) {
 	e.SetHtmlTemplate(t)
 }
 
-func (e *Engine) httpRequestHandle(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
+func (e *Engine) httpRequestHandle(ctx *Context) {
 	for _, group := range e.routerGroups {
-		routerName := SubStringLast(r.RequestURI, "/"+group.groupName)
+		routerName := SubStringLast(ctx.R.URL.Path, "/"+group.groupName)
 		// get/1
 		node := group.treeNode.Get(routerName)
 		if node != nil && node.isEnd {
 			// 路由匹配上了
-			ctx := &Context{
-				W:      w,
-				R:      r,
-				engine: e,
-			}
 			handle, ok := group.handlerMap[node.routerName][ANY]
 			if ok {
 				group.methodHandle(node.routerName, ANY, handle, ctx)
 				return
 			}
-			handle, ok = group.handlerMap[node.routerName][method]
+			handle, ok = group.handlerMap[node.routerName][ctx.R.Method]
 			if ok {
-				group.methodHandle(node.routerName, method, handle, ctx)
+				group.methodHandle(node.routerName, ctx.R.Method, handle, ctx)
 				return
 			}
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			fmt.Fprintf(w, "%s %s not allowed \n", r.RequestURI, method)
+			ctx.W.WriteHeader(http.StatusMethodNotAllowed)
+			_, err := fmt.Fprintf(ctx.W, "%s %s not allowed \n", ctx.R.RequestURI, ctx.R.Method)
+			if err != nil {
+				log.Println(err)
+			}
 			return
 		}
 	}
-	w.WriteHeader(http.StatusNotFound)
-	fmt.Fprintf(w, "%s  not found \n", r.RequestURI)
+	ctx.W.WriteHeader(http.StatusNotFound)
+	_, err := fmt.Fprintf(ctx.W, "%s  not found \n", ctx.R.RequestURI)
+	if err != nil {
+		log.Println(err)
+	}
 }
 
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	e.httpRequestHandle(w, r)
+	ctx := e.pool.Get().(*Context)
+	ctx.W = w
+	ctx.R = r
+	e.httpRequestHandle(ctx)
+	// 存起来可以不用再次分配内存，提高效率
+	e.pool.Put(ctx)
 }
 
 func (e *Engine) Run() {
@@ -190,8 +199,18 @@ func (e *Engine) Run() {
 	}
 }
 
+func (e *Engine) allocateContext() any {
+	return &Context{engine: e}
+}
+
 func New() *Engine {
-	return &Engine{
-		router: router{},
+	engine := &Engine{
+		router:     router{},
+		funcMap:    nil,
+		HTMLRender: render.HTMLRender{},
 	}
+	engine.pool.New = func() any {
+		return engine.allocateContext()
+	}
+	return engine
 }
