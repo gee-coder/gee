@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gee-coder/gee"
+	geelog "github.com/gee-coder/gee/log"
 )
 
 type User struct {
@@ -39,6 +40,7 @@ func main() {
 			fmt.Println("执行后置中间件代码")
 		}
 	})
+	group.AddMiddlewareFunc(gee.Logging)
 	group.Get("/hello", func(ctx *gee.Context) {
 		fmt.Println("handler")
 		_, err := fmt.Fprintln(ctx.W, "user/hello Get geecoder.net")
@@ -218,9 +220,18 @@ func main() {
 		}
 	})
 
+	logger := geelog.Default()
+	logger.Level = geelog.LevelInfo
+	logger.Formatter = &geelog.JsonFormatter{TimeDisplay: true}
+	logger.SetLogPath("./log")
+	defer logger.CloseWriter()
+
 	group.Post("/xmlParam", func(ctx *gee.Context) {
 		user := &User{}
 		err := ctx.BindXML(user)
+		logger.Debug("这是 Debug 日志！")
+		logger.Info("这是 Info 日志！")
+		logger.Error("这是 Error 日志！")
 		if err == nil {
 			ctx.JSON(http.StatusOK, user)
 		} else {

@@ -62,6 +62,7 @@ func (c *Context) HTMLTemplateGlob(name string, funcMap template.FuncMap, data a
 
 func (c *Context) Render(r render.Render, code int) error {
 	err := r.Render(c.W, code)
+	c.StatusCode = code
 	if code != http.StatusOK {
 		c.W.WriteHeader(code)
 	}
