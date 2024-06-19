@@ -2,6 +2,7 @@ package log
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -11,37 +12,46 @@ type TextFormatter struct {
 
 func (f *TextFormatter) Format(param *LoggingFormatParam) string {
 	now := time.Now()
-	fieldsString := ""
+	var builderField strings.Builder
+	var fieldsDisplay = ""
 	if param.LoggerFields != nil {
-		// name=xx,age=xxx
-		var sb strings.Builder
-		var count = 0
-		var lens = len(param.LoggerFields)
+		fieldsDisplay = "| fields: "
+		num := len(param.LoggerFields)
+		count := 0
 		for k, v := range param.LoggerFields {
-			fmt.Fprintf(&sb, "%s=%v", k, v)
-			if count < lens-1 {
-				fmt.Fprintf(&sb, ",")
+			fmt.Fprintf(&builderField, "%s=%v", k, v)
+			if count < num-1 {
+				fmt.Fprintf(&builderField, ",")
 				count++
 			}
 		}
-		fieldsString = sb.String()
 	}
-	var msgInfo = "\n msg: "
+	msgKey := "\n msg: "
+	var sb strings.Builder
 	if param.Level == LevelError {
-		msgInfo = "\n Error Cause By: "
+		msgKey = "\n Error Cause By: "
+		var pcs [32]uintptr
+		n := runtime.Callers(5, pcs[:])
+		for _, pc := range pcs[:n] {
+			fn := runtime.FuncForPC(pc)
+			line, l := fn.FileLine(pc)
+			sb.WriteString(fmt.Sprintf("\n\t%s:%d", line, l))
+		}
 	}
 	if param.IsColor {
 		// 要带颜色  error的颜色 为红色 info为绿色 debug为蓝色
 		levelColor := f.LevelColor(param.Level)
 		msgColor := f.MsgColor(param.Level)
-		return fmt.Sprintf("%s [gee] %s %s%v%s | level= %s %s %s%s%s %v %s %s ",
+		return fmt.Sprintf("%s [gee] %s %s%v%s | level= %s %s %s %s%s %v %s %s %s%s \n",
 			yellow, reset, blue, now.Format("2006-01-02 15:04:05"), reset,
-			levelColor, param.Level.Level(), reset, msgColor, msgInfo, param.Msg, reset, fieldsString,
+			levelColor, param.Level.Level(), reset, msgColor, msgKey, param.Msg, reset, fieldsDisplay,
+			builderField.String(), sb.String(),
 		)
 	}
-	return fmt.Sprintf("[gee] %v | level=%s%s%v %s",
+	return fmt.Sprintf("[gee] %v | level=%s  %s  %v %s %s%s\n",
 		now.Format("2006-01-02 15:04:05"),
-		param.Level.Level(), msgInfo, param.Msg, fieldsString)
+		param.Level.Level(), msgKey, param.Msg, fieldsDisplay, builderField.String(), sb.String(),
+	)
 }
 
 func (f *TextFormatter) LevelColor(level LoggerLevel) string {

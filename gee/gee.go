@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 
+	geeLog "github.com/gee-coder/gee/log"
 	"github.com/gee-coder/gee/render"
 )
 
@@ -111,6 +112,7 @@ func (r *routerGroup) Head(routerName string, handlerFunc HandlerFunc, middlewar
 // 路由
 type router struct {
 	routerGroups []*routerGroup
+	engine       *Engine
 }
 
 func (r *router) Group(name string) *routerGroup {
@@ -122,9 +124,12 @@ func (r *router) Group(name string) *routerGroup {
 		middlewares:        make([]MiddlewareFunc, 0),
 		middlewaresFuncMap: make(map[string]map[string][]MiddlewareFunc),
 	}
+	g.AddMiddlewareFunc(r.engine.middlewares...)
 	r.routerGroups = append(r.routerGroups, g)
 	return g
 }
+
+type ErrorHandler func(err error) (int, any)
 
 // 引擎
 type Engine struct {
@@ -133,7 +138,15 @@ type Engine struct {
 	HTMLRender render.HTMLRender
 	// sync.Pool用于存储分配了还没被使用但未来可能被使用的值
 	// sync.Pool大小可伸缩，会动态扩容，池中不活跃的对象会被自动清理
-	pool sync.Pool
+	pool   sync.Pool
+	Logger *geeLog.Logger
+	// 全局中间件
+	middlewares  []MiddlewareFunc
+	errorHandler ErrorHandler
+}
+
+func (e *Engine) RegisterErrorHandler(err ErrorHandler) {
+	e.errorHandler = err
 }
 
 func (e *Engine) SetFuncMap(funcMap template.FuncMap) {
@@ -186,6 +199,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := e.pool.Get().(*Context)
 	ctx.W = w
 	ctx.R = r
+	ctx.Logger = e.Logger
 	e.httpRequestHandle(ctx)
 	// 存起来可以不用再次分配内存，提高效率
 	e.pool.Put(ctx)
@@ -203,14 +217,27 @@ func (e *Engine) allocateContext() any {
 	return &Context{engine: e}
 }
 
+func (e *Engine) AddMiddlewareFunc(middlewares ...MiddlewareFunc) {
+	e.middlewares = append(e.middlewares, middlewares...)
+}
+
 func New() *Engine {
 	engine := &Engine{
 		router:     router{},
 		funcMap:    nil,
 		HTMLRender: render.HTMLRender{},
+		Logger:     geeLog.Default(),
 	}
 	engine.pool.New = func() any {
 		return engine.allocateContext()
 	}
+	// r.engine = engine
+	return engine
+}
+
+func Default() *Engine {
+	engine := New()
+	engine.AddMiddlewareFunc(Recovery, Logging)
+	engine.router.engine = engine
 	return engine
 }

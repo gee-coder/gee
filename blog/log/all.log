@@ -1,0 +1,6 @@
+{"log_level":"INFO","log_time":"2024-06-20 00:13:20","msg":"这是 Info 日志！"}
+{"log_level":"ERROR","log_time":"2024-06-20 00:13:20","msg":"这是 Error 日志！"}
+{"log_level":"INFO","log_time":"2024-06-20 00:18:31","msg":"a error"}
+{"log_level":"INFO","log_time":"2024-06-20 00:21:15","msg":"a error"}
+{"log_level":"ERROR","log_time":"2024-06-20 00:24:42","msg":"这是 Error 日志！"}
+{"log_level":"ERROR","log_time":"2024-06-20 00:24:53","msg":"a error\n\n\tC:/Program Files/Go/g1.5.0.windows-amd64/go/src/runtime/panic.go:766\n\tD:/work-space/go-projects/src/web/blog/main.go:303\n\tD:/work-space/go-projects/src/web/gee/recovery.go:45\n\tD:/work-space/go-projects/src/web/gee/logging.go:106\n\tD:/work-space/go-projects/src/web/blog/main.go:101\n\tD:/work-space/go-projects/src/web/gee/gee.go:78\n\tD:/work-space/go-projects/src/web/gee/gee.go:181\n\tD:/work-space/go-projects/src/web/gee/gee.go:205\n\tC:/Program Files/Go/g1.5.0.windows-amd64/go/src/net/http/server.go:2684\n\tC:/Program Files/Go/g1.5.0.windows-amd64/go/src/net/http/server.go:3138\n\tC:/Program Files/Go/g1.5.0.windows-amd64/go/src/net/http/server.go:2040\n\tC:/Program Files/Go/g1.5.0.windows-amd64/go/src/runtime/asm_amd64.s:1696"}

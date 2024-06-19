@@ -139,27 +139,30 @@ func (l *Logger) CheckFileSize(w *LoggerWriter) {
 
 func (l *Logger) Print(level LoggerLevel, msg any) {
 	if l.Level > level {
-		// 当前的级别大于输入级别 不打印对应的级别日志
+		// 级别不满足 不打印日志
 		return
 	}
 	param := &LoggingFormatParam{
 		Level:        level,
-		LoggerFields: l.LoggerFields,
 		Msg:          msg,
+		LoggerFields: l.LoggerFields,
 	}
-	str := l.Formatter.Format(param)
 	for _, out := range l.Outs {
 		if out.Out == os.Stdout {
 			param.IsColor = true
-			str = l.Formatter.Format(param)
+			l.print(param, out)
 		}
-		fmt.Fprintln(out.Out, str)
-		l.CheckFileSize(out)
-		// if out.Level == -1 || level == out.Level {
-		// 	fmt.Fprintln(out.Out, str)
-		// 	l.CheckFileSize(out)
-		// }
+		if out.Level == -1 || out.Level == level {
+			param.IsColor = false
+			l.print(param, out)
+			l.CheckFileSize(out)
+		}
 	}
+}
+
+func (l *Logger) print(param *LoggingFormatParam, out *LoggerWriter) {
+	formatter := l.Formatter.Format(param)
+	fmt.Fprintln(out.Out, formatter)
 }
 
 func (l *Logger) Info(msg any) {

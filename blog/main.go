@@ -1,13 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 
 	"github.com/gee-coder/gee"
-	geelog "github.com/gee-coder/gee/log"
+	geeError "github.com/gee-coder/gee/error"
+	geeLog "github.com/gee-coder/gee/log"
 )
 
 type User struct {
@@ -17,6 +19,65 @@ type User struct {
 	Phone     string   `xml:"phone" json:"phone"`
 	Email     string   `xml:"email" json:"email" gee:"required"`
 	Addresses []string `xml:"addresses" json:"addresses"`
+}
+
+func a(param int, geeError *geeError.GeeError) {
+	if param == 1 {
+		// 发生错误的时候，放入一个地方 然后进行统一处理
+		err := errors.New("a error")
+		geeError.Put(err)
+	}
+}
+
+func b(param int, geeError *geeError.GeeError) {
+	if param == 1 {
+		err2 := errors.New("b error")
+		geeError.Put(err2)
+	}
+}
+
+func c(param int, geeError *geeError.GeeError) {
+	if param == 1 {
+		err2 := errors.New("c error")
+		geeError.Put(err2)
+	}
+}
+
+type BlogResponse struct {
+	Success bool
+	Code    int
+	Data    any
+	Msg     string
+}
+
+type BlogNoDataResponse struct {
+	Success bool
+	Code    int
+	Msg     string
+}
+
+func (b *BlogResponse) Error() string {
+	return b.Msg
+}
+
+func (b *BlogResponse) Response() any {
+	if b.Data == nil {
+		return &BlogNoDataResponse{
+			Success: false,
+			Code:    -999,
+			Msg:     "账号密码错误",
+		}
+	}
+	return b
+}
+
+func login() *BlogResponse {
+	return &BlogResponse{
+		Success: false,
+		Code:    -999,
+		Data:    nil,
+		Msg:     "账号密码错误",
+	}
 }
 
 func Log(next gee.HandlerFunc) gee.HandlerFunc {
@@ -29,7 +90,7 @@ func Log(next gee.HandlerFunc) gee.HandlerFunc {
 }
 
 func main() {
-	engine := gee.New()
+	engine := gee.Default()
 
 	group := engine.Group("user")
 	group.AddMiddlewareFunc(func(next gee.HandlerFunc) gee.HandlerFunc {
@@ -40,7 +101,6 @@ func main() {
 			fmt.Println("执行后置中间件代码")
 		}
 	})
-	group.AddMiddlewareFunc(gee.Logging)
 	group.Get("/hello", func(ctx *gee.Context) {
 		fmt.Println("handler")
 		_, err := fmt.Fprintln(ctx.W, "user/hello Get geecoder.net")
@@ -220,23 +280,67 @@ func main() {
 		}
 	})
 
-	logger := geelog.Default()
-	logger.Level = geelog.LevelInfo
-	logger.Formatter = &geelog.JsonFormatter{TimeDisplay: true}
-	logger.SetLogPath("./log")
-	defer logger.CloseWriter()
+	engine.Logger.Level = geeLog.LevelInfo
+	// engine.Logger.Formatter = &geeLog.JsonFormatter{TimeDisplay: true}
+	// engine.Logger.SetLogPath("./log")
+	// defer engine.Logger.CloseWriter()
 
-	group.Post("/xmlParam", func(ctx *gee.Context) {
+	group.Post("/xmlParam1", func(ctx *gee.Context) {
 		user := &User{}
-		err := ctx.BindXML(user)
-		logger.Debug("这是 Debug 日志！")
-		logger.Info("这是 Info 日志！")
-		logger.Error("这是 Error 日志！")
+		_ = ctx.BindXML(user)
+		err := errors.New("a error")
+		if err != nil {
+			panic(err)
+		}
 		if err == nil {
 			ctx.JSON(http.StatusOK, user)
 		} else {
 			log.Println(err)
 		}
+	})
+
+	group.Post("/xmlParam2", func(ctx *gee.Context) {
+		user := &User{}
+		_ = ctx.BindXML(user)
+		err := geeError.Default()
+		err.Result(func(geeError *geeError.GeeError) {
+			ctx.Logger.Info(geeError.Error())
+			ctx.JSON(http.StatusInternalServerError, user)
+		})
+		a(1, err)
+		b(1, err)
+		c(1, err)
+		ctx.JSON(http.StatusOK, user)
+	})
+
+	group.Post("/xmlParam3", func(ctx *gee.Context) {
+		user := &User{}
+		_ = ctx.BindXML(user)
+		err := geeError.Default()
+		err.Result(func(geeError *geeError.GeeError) {
+			ctx.Logger.Info(geeError.Error())
+			ctx.JSON(http.StatusInternalServerError, user)
+		})
+		a(1, err)
+		b(1, err)
+		c(1, err)
+		ctx.JSON(http.StatusOK, user)
+	})
+
+	engine.RegisterErrorHandler(func(err error) (int, any) {
+		switch e := err.(type) {
+		case *BlogResponse:
+			return http.StatusOK, e.Response()
+		default:
+			return http.StatusInternalServerError, "Internal Server Error"
+		}
+	})
+
+	group.Post("/xmlParam4", func(ctx *gee.Context) {
+		user := &User{}
+		_ = ctx.BindXML(user)
+		err := login()
+		ctx.HandleWithError(http.StatusOK, user, err)
 	})
 
 	engine.Run()

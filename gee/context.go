@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gee-coder/gee/binding"
+	geeLog "github.com/gee-coder/gee/log"
 	"github.com/gee-coder/gee/render"
 )
 
@@ -28,6 +29,7 @@ type Context struct {
 	DisallowUnknownFields bool
 	IsValidate            bool
 	StatusCode            int
+	Logger                *geeLog.Logger
 }
 
 func (c *Context) HTMLTemplate(name string, funcMap template.FuncMap, data any, fileName ...string) {
@@ -63,9 +65,6 @@ func (c *Context) HTMLTemplateGlob(name string, funcMap template.FuncMap, data a
 func (c *Context) Render(r render.Render, code int) error {
 	err := r.Render(c.W, code)
 	c.StatusCode = code
-	if code != http.StatusOK {
-		c.W.WriteHeader(code)
-	}
 	return err
 }
 
@@ -297,4 +296,17 @@ func (c *Context) BindJson(obj any) error {
 
 func (c *Context) BindXML(obj any) error {
 	return c.MustBindWith(obj, binding.XML)
+}
+
+func (c *Context) Fail(code int, msg string) error {
+	return c.String(code, msg)
+}
+
+func (c *Context) HandleWithError(code int, obj any, err error) {
+	if err != nil {
+		statusCode, data := c.engine.errorHandler(err)
+		c.JSON(statusCode, data)
+		return
+	}
+	c.JSON(code, obj)
 }
