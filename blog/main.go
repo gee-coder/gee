@@ -6,10 +6,13 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gee-coder/gee"
 	geeError "github.com/gee-coder/gee/error"
 	geeLog "github.com/gee-coder/gee/log"
+	geePool "github.com/gee-coder/gee/pool"
 )
 
 type User struct {
@@ -341,6 +344,44 @@ func main() {
 		_ = ctx.BindXML(user)
 		err := login()
 		ctx.HandleWithError(http.StatusOK, user, err)
+	})
+
+	pool, _ := geePool.NewPool(2)
+	group.Post("/pool", func(ctx *gee.Context) {
+		currentTime := time.Now().UnixMilli()
+		var wg sync.WaitGroup
+		wg.Add(5)
+		pool.Submit(func() {
+			defer func() {
+				wg.Done()
+			}()
+			fmt.Println("1111111")
+			time.Sleep(3 * time.Second)
+
+		})
+		pool.Submit(func() {
+			fmt.Println("22222222")
+			time.Sleep(3 * time.Second)
+			wg.Done()
+		})
+		pool.Submit(func() {
+			fmt.Println("33333333")
+			time.Sleep(3 * time.Second)
+			wg.Done()
+		})
+		pool.Submit(func() {
+			fmt.Println("44444")
+			time.Sleep(3 * time.Second)
+			wg.Done()
+		})
+		pool.Submit(func() {
+			fmt.Println("55555555")
+			time.Sleep(3 * time.Second)
+			wg.Done()
+		})
+		wg.Wait()
+		fmt.Printf("time: %v \n", time.Now().UnixMilli()-currentTime)
+		ctx.JSON(http.StatusOK, "success")
 	})
 
 	engine.Run()
