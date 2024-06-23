@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 
+	geeConfig "github.com/gee-coder/gee/config"
 	geeLog "github.com/gee-coder/gee/log"
 	"github.com/gee-coder/gee/render"
 )
@@ -205,6 +206,21 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.pool.Put(ctx)
 }
 
+func (e *Engine) Handler() http.Handler {
+	return e
+}
+
+func (e *Engine) RunTLS(addr, certFile, keyFile string) {
+	err := http.ListenAndServeTLS(addr, certFile, keyFile, e.Handler())
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (c *Context) SetBasicAuth(username, password string) {
+	c.R.Header.Set("Authorization", "Basic "+BasicAuth(username, password))
+}
+
 func (e *Engine) Run() {
 	http.Handle(SEPARATOR, e)
 	err := http.ListenAndServe(":8111", nil)
@@ -237,7 +253,21 @@ func New() *Engine {
 
 func Default() *Engine {
 	engine := New()
+	// 加入配置
+	logPath, ok := geeConfig.Conf.Log["path"]
+	if ok {
+		engine.Logger.SetLogPath(logPath.(string))
+	}
 	engine.AddMiddlewareFunc(Recovery, Logging)
 	engine.router.engine = engine
 	return engine
+}
+
+func (e *Engine) LoadTemplateGlobByConf() {
+	pattern, ok := geeConfig.Conf.Template["pattern"]
+	if !ok {
+		panic("config pattern not exist")
+	}
+	t := template.Must(template.New("").Funcs(e.funcMap).ParseGlob(pattern.(string)))
+	e.SetHtmlTemplate(t)
 }

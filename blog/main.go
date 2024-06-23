@@ -13,6 +13,7 @@ import (
 	geeError "github.com/gee-coder/gee/error"
 	geeLog "github.com/gee-coder/gee/log"
 	geePool "github.com/gee-coder/gee/pool"
+	"github.com/gee-coder/gee/token"
 )
 
 type User struct {
@@ -94,6 +95,17 @@ func Log(next gee.HandlerFunc) gee.HandlerFunc {
 
 func main() {
 	engine := gee.Default()
+
+	// fmt.Println(gee.BasicAuth("geecoder", "666666"))
+	// accounts := &gee.Accounts{
+	// 	Users: make(map[string]string),
+	// }
+	// accounts.Users["geecoder"] = "666666"
+	// engine.AddMiddlewareFunc(accounts.BasicAuth)
+
+	jh := &token.JwtHandler{Key: []byte("666666")}
+	// 待办：为特定的中间件 需要指定不进行拦截的请求
+	engine.AddMiddlewareFunc(jh.AuthInterceptor)
 
 	group := engine.Group("user")
 	group.AddMiddlewareFunc(func(next gee.HandlerFunc) gee.HandlerFunc {
@@ -384,5 +396,43 @@ func main() {
 		ctx.JSON(http.StatusOK, "success")
 	})
 
-	engine.Run()
+	group.Get("/auth/login", func(ctx *gee.Context) {
+		jwt := &token.JwtHandler{}
+		jwt.Key = []byte("666666")
+		jwt.SendCookie = true
+		jwt.TimeOut = 10 * time.Minute
+		jwt.RefreshTimeOut = 20 * time.Minute
+		jwt.Authenticator = func(ctx *gee.Context) (map[string]any, error) {
+			data := make(map[string]any)
+			data["userId"] = 1
+			return data, nil
+		}
+		token, err := jwt.LoginHandler(ctx)
+		if err != nil {
+			log.Println(err)
+			ctx.JSON(http.StatusOK, err.Error())
+			return
+		}
+		ctx.JSON(http.StatusOK, token)
+	})
+
+	group.Get("/auth/refresh", func(ctx *gee.Context) {
+		jwt := &token.JwtHandler{}
+		jwt.Key = []byte("666666")
+		jwt.SendCookie = true
+		jwt.TimeOut = 10 * time.Minute
+		jwt.RefreshTimeOut = 20 * time.Minute
+		jwt.RefreshKey = "blog_refresh_token"
+		ctx.Set(jwt.RefreshKey, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MTkxNTc1OTEsImlhdCI6MTcxOTE1NjM5MSwidXNlcklkIjoxfQ.qnm-J6SLqMvB-l34AYEg8HCiAq4K1LBE2tUp8lUJNtw")
+		token, err := jwt.RefreshHandler(ctx)
+		if err != nil {
+			log.Println(err)
+			ctx.JSON(http.StatusOK, err.Error())
+			return
+		}
+		ctx.JSON(http.StatusOK, token)
+	})
+
+	// engine.Run()
+	engine.RunTLS(":8118", "key/server.pem", "key/server.key")
 }

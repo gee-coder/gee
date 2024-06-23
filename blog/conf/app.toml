@@ -1,0 +1,14 @@
+[log]
+path="./log"
+[pool]
+cap=10
+[mysql]
+username="root"
+password="666666"
+url=""
+table_prefix="gee_"
+[redis]
+host="127.0.0.1"
+port=6379
+[template]
+pattern="./tpl/*.html"

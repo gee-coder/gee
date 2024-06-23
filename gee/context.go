@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/gee-coder/gee/binding"
 	geeLog "github.com/gee-coder/gee/log"
@@ -30,6 +31,56 @@ type Context struct {
 	IsValidate            bool
 	StatusCode            int
 	Logger                *geeLog.Logger
+	Keys                  map[string]any
+	mu                    sync.RWMutex
+	sameSite              http.SameSite
+}
+
+func (c *Context) SetSameSite(s http.SameSite) {
+	c.sameSite = s
+}
+
+func (c *Context) SetCookie(name, value string, maxAge int, path, domain string, secure, httpOnly bool) {
+	if path == "" {
+		path = "/"
+	}
+	http.SetCookie(c.W, &http.Cookie{
+		Name:     name,
+		Value:    url.QueryEscape(value),
+		MaxAge:   maxAge,
+		Path:     path,
+		Domain:   domain,
+		SameSite: c.sameSite,
+		Secure:   secure,
+		HttpOnly: httpOnly,
+	})
+}
+
+func (c *Context) GetCookie(name string) string {
+	cookie, err := c.R.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	if cookie != nil {
+		return cookie.Value
+	}
+	return ""
+}
+
+func (c *Context) Set(key string, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Keys == nil {
+		c.Keys = make(map[string]any)
+	}
+	c.Keys[key] = value
+}
+
+func (c *Context) Get(key string) (value any, exists bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value, exists = c.Keys[key]
+	return
 }
 
 func (c *Context) HTMLTemplate(name string, funcMap template.FuncMap, data any, fileName ...string) {

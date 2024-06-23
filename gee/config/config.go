@@ -9,11 +9,11 @@ import (
 	"os"
 )
 
-var Conf = &MsConfig{
+var Conf = &GeeConfig{
 	logger: geeLog.Default(),
 }
 
-type MsConfig struct {
+type GeeConfig struct {
 	logger   *geeLog.Logger
 	Log      map[string]any
 	Pool     map[string]any
