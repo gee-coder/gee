@@ -221,9 +221,13 @@ func (c *Context) SetBasicAuth(username, password string) {
 	c.R.Header.Set("Authorization", "Basic "+BasicAuth(username, password))
 }
 
-func (e *Engine) Run() {
+func (e *Engine) Run(ports ...string) {
+	port := ":8111"
+	if ports != nil {
+		port = ports[0]
+	}
 	http.Handle(SEPARATOR, e)
-	err := http.ListenAndServe(":8111", nil)
+	err := http.ListenAndServe(port, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
