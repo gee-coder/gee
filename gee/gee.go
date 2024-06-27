@@ -5,11 +5,17 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"sync"
 
 	geeConfig "github.com/gee-coder/gee/config"
+	"github.com/gee-coder/gee/gateway"
 	geeLog "github.com/gee-coder/gee/log"
+	"github.com/gee-coder/gee/register"
 	"github.com/gee-coder/gee/render"
+	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
+	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
 const ANY = "ANY"
@@ -142,8 +148,23 @@ type Engine struct {
 	pool   sync.Pool
 	Logger *geeLog.Logger
 	// 全局中间件
-	middlewares  []MiddlewareFunc
-	errorHandler ErrorHandler
+	middlewares      []MiddlewareFunc
+	errorHandler     ErrorHandler
+	OpenGateWay      bool
+	gatewayTreeNode  *gateway.TreeNode
+	gatewayConfigs   []gateway.GWConfig
+	gatewayConfigMap map[string]gateway.GWConfig
+	RegisterType     string
+	RegisterOption   register.Option
+	registerClient   register.GeeRegister
+}
+
+func (e *Engine) SetGatewayConfig(gatewayConfigs []gateway.GWConfig) {
+	e.gatewayConfigs = gatewayConfigs
+	for _, config := range e.gatewayConfigs {
+		e.gatewayTreeNode.Put(config.Path, config.Name)
+		e.gatewayConfigMap[config.Name] = config
+	}
 }
 
 func (e *Engine) RegisterErrorHandler(err ErrorHandler) {
@@ -165,6 +186,53 @@ func (e *Engine) LoadTemplate(pattern string) {
 }
 
 func (e *Engine) httpRequestHandle(ctx *Context) {
+	if e.OpenGateWay {
+		// 网关业务处理
+		uri := ctx.R.URL.Path
+		node := e.gatewayTreeNode
+		matchNode := node.Get(uri)
+		if matchNode == nil {
+			ctx.W.WriteHeader(http.StatusNotFound)
+			fmt.Fprintln(ctx.W, ctx.R.RequestURI+" not found")
+			return
+		}
+		gwConfig := e.gatewayConfigMap[matchNode.GwName]
+		if e.RegisterType == "nacos" {
+			client := e.registerClient.(naming_client.INamingClient)
+			instance, err := client.SelectOneHealthyInstance(vo.SelectOneHealthInstanceParam{
+				ServiceName: gwConfig.Name,
+			})
+			if err != nil {
+				panic(err)
+			}
+			gwConfig.Host = instance.Ip
+			gwConfig.Port = int(instance.Port)
+		}
+		target, _ := url.Parse(fmt.Sprintf("http://%s:%d%s", gwConfig.Host, gwConfig.Port, uri))
+		director := func(req *http.Request) {
+			req.Host = target.Host
+			req.URL.Host = target.Host
+			req.URL.Path = target.Path
+			req.URL.Scheme = target.Scheme
+			if _, ok := req.Header["User-Agent"]; !ok {
+				req.Header.Set("User-Agent", "")
+			}
+			if gwConfig.Header != nil {
+				gwConfig.Header(req)
+			}
+		}
+		response := func(response *http.Response) error {
+			log.Println("改变返回值")
+			return nil
+		}
+		handler := func(writer http.ResponseWriter, request *http.Request, err error) {
+			log.Println("错误处理", err)
+		}
+		proxy := httputil.ReverseProxy{Director: director, ModifyResponse: response, ErrorHandler: handler}
+		proxy.ServeHTTP(ctx.W, ctx.R)
+		return
+	}
+
 	for _, group := range e.routerGroups {
 		routerName := SubStringLast(ctx.R.URL.Path, "/"+group.groupName)
 		// get/1
@@ -222,6 +290,21 @@ func (c *Context) SetBasicAuth(username, password string) {
 }
 
 func (e *Engine) Run(ports ...string) {
+	if e.RegisterType == "nacos" {
+		r := &register.GeeNacosRegister{}
+		err := r.CreateCli(e.RegisterOption)
+		if err != nil {
+			panic(err)
+		}
+		e.registerClient = r
+	} else if e.RegisterType == "etcd" {
+		r := &register.GeeEtcdRegister{}
+		err := r.CreateCli(e.RegisterOption)
+		if err != nil {
+			panic(err)
+		}
+		e.registerClient = r
+	}
 	port := ":8111"
 	if ports != nil {
 		port = ports[0]
@@ -243,10 +326,12 @@ func (e *Engine) AddMiddlewareFunc(middlewares ...MiddlewareFunc) {
 
 func New() *Engine {
 	engine := &Engine{
-		router:     router{},
-		funcMap:    nil,
-		HTMLRender: render.HTMLRender{},
-		Logger:     geeLog.Default(),
+		router:           router{},
+		funcMap:          nil,
+		HTMLRender:       render.HTMLRender{},
+		Logger:           geeLog.Default(),
+		gatewayTreeNode:  &gateway.TreeNode{Name: SEPARATOR, Children: make([]*gateway.TreeNode, 0)},
+		gatewayConfigMap: make(map[string]gateway.GWConfig),
 	}
 	engine.pool.New = func() any {
 		return engine.allocateContext()

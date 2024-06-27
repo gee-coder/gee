@@ -56,6 +56,10 @@ func (c *Context) SetCookie(name, value string, maxAge int, path, domain string,
 	})
 }
 
+func (c *Context) GetHeader(key string) string {
+	return c.R.Header.Get(key)
+}
+
 func (c *Context) GetCookie(name string) string {
 	cookie, err := c.R.Cookie(name)
 	if err != nil {
