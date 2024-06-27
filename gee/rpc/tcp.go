@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gee-coder/gee/register"
 	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -133,21 +134,21 @@ type Header struct {
 	RequestId     int64
 }
 
-type MsRpcMessage struct {
+type GeeRpcMessage struct {
 	// 头
 	Header *Header
 	// 消息体
 	Data any
 }
 
-type MsRpcRequest struct {
+type GeeRpcRequest struct {
 	RequestId   int64
 	ServiceName string
 	MethodName  string
 	Args        []any
 }
 
-type MsRpcResponse struct {
+type GeeRpcResponse struct {
 	RequestId     int64
 	Code          int16
 	Msg           string
@@ -156,50 +157,62 @@ type MsRpcResponse struct {
 	Data          any
 }
 
-type MsRpcServer interface {
+type GeeRpcServer interface {
 	Register(name string, service interface{})
 	Run()
 	Stop()
 }
 
-type MsTcpServer struct {
+type GeeTcpServer struct {
 	host           string
 	port           int
 	listen         net.Listener
 	serviceMap     map[string]any
 	RegisterType   string
+	RegisterOption register.Option
+	RegisterCli    register.GeeRegister
 	LimiterTimeOut time.Duration
 	Limiter        *rate.Limiter
 }
 
-func NewTcpServer(host string, port int) (*MsTcpServer, error) {
+func NewTcpServer(host string, port int) (*GeeTcpServer, error) {
 	listen, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return nil, err
 	}
-	m := &MsTcpServer{serviceMap: make(map[string]any)}
+	m := &GeeTcpServer{serviceMap: make(map[string]any)}
 	m.listen = listen
 	m.port = port
 	m.host = host
 	return m, nil
 }
-func (s *MsTcpServer) SetLimiter(limit, cap int) {
+
+func (s *GeeTcpServer) SetLimiter(limit, cap int) {
 	s.Limiter = rate.NewLimiter(rate.Limit(limit), cap)
 }
-func (s *MsTcpServer) Register(name string, service interface{}) {
+
+func (s *GeeTcpServer) Register(name string, service interface{}) {
 	t := reflect.TypeOf(service)
 	if t.Kind() != reflect.Pointer {
 		panic("service must be pointer")
 	}
 	s.serviceMap[name] = service
+	err := s.RegisterCli.CreateCli(s.RegisterOption)
+	if err != nil {
+		panic(err)
+	}
+	err = s.RegisterCli.RegisterService(name, s.host, s.port)
+	if err != nil {
+		panic(err)
+	}
 }
 
-type MsTcpConn struct {
+type GeeTcpConn struct {
 	conn    net.Conn
-	rspChan chan *MsRpcResponse
+	rspChan chan *GeeRpcResponse
 }
 
-func (c MsTcpConn) Send(rsp *MsRpcResponse) error {
+func (c GeeTcpConn) Send(rsp *GeeRpcResponse) error {
 	if rsp.Code != 200 {
 		// 进行默认的数据发送
 	}
@@ -263,29 +276,29 @@ func (c MsTcpConn) Send(rsp *MsRpcResponse) error {
 	return nil
 }
 
-func (s *MsTcpServer) Stop() {
+func (s *GeeTcpServer) Stop() {
 	err := s.listen.Close()
 	if err != nil {
 		log.Println(err)
 	}
 }
 
-func (s *MsTcpServer) Run() {
+func (s *GeeTcpServer) Run() {
 	for {
 		conn, err := s.listen.Accept()
 		if err != nil {
 			log.Println(err)
 			continue
 		}
-		msConn := &MsTcpConn{conn: conn, rspChan: make(chan *MsRpcResponse, 1)}
+		geeConn := &GeeTcpConn{conn: conn, rspChan: make(chan *GeeRpcResponse, 1)}
 		// 1. 一直接收数据 解码工作 请求业务获取结果 发送到rspChan
 		// 2. 获得结果 编码 发送数据
-		go s.readHandle(msConn)
-		go s.writeHandle(msConn)
+		go s.readHandle(geeConn)
+		go s.writeHandle(geeConn)
 	}
 }
 
-func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
+func (s *GeeTcpServer) readHandle(conn *GeeTcpConn) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Println("readHandle recover ", err)
@@ -297,7 +310,7 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 	defer cancel()
 	err2 := s.Limiter.WaitN(ctx, 1)
 	if err2 != nil {
-		rsp := &MsRpcResponse{}
+		rsp := &GeeRpcResponse{}
 		rsp.Code = 700 // 被限流的错误
 		rsp.Msg = err2.Error()
 		conn.rspChan <- rsp
@@ -307,7 +320,7 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 	// 解码
 	msg, err := decodeFrame(conn.conn)
 	if err != nil {
-		rsp := &MsRpcResponse{}
+		rsp := &GeeRpcResponse{}
 		rsp.Code = 500
 		rsp.Msg = err.Error()
 		conn.rspChan <- rsp
@@ -316,13 +329,13 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 	if msg.Header.MessageType == msgRequest {
 		if msg.Header.SerializeType == ProtoBuff {
 			req := msg.Data.(*Request)
-			rsp := &MsRpcResponse{RequestId: req.RequestId}
+			rsp := &GeeRpcResponse{RequestId: req.RequestId}
 			rsp.SerializeType = msg.Header.SerializeType
 			rsp.CompressType = msg.Header.CompressType
 			serviceName := req.ServiceName
 			service, ok := s.serviceMap[serviceName]
 			if !ok {
-				rsp := &MsRpcResponse{}
+				rsp := &GeeRpcResponse{}
 				rsp.Code = 500
 				rsp.Msg = errors.New("no service found").Error()
 				conn.rspChan <- rsp
@@ -331,7 +344,7 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 			methodName := req.MethodName
 			method := reflect.ValueOf(service).MethodByName(methodName)
 			if method.IsNil() {
-				rsp := &MsRpcResponse{}
+				rsp := &GeeRpcResponse{}
 				rsp.Code = 500
 				rsp.Msg = errors.New("no service method found").Error()
 				conn.rspChan <- rsp
@@ -361,14 +374,14 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 			rsp.Data = results[0]
 			conn.rspChan <- rsp
 		} else {
-			req := msg.Data.(*MsRpcRequest)
-			rsp := &MsRpcResponse{RequestId: req.RequestId}
+			req := msg.Data.(*GeeRpcRequest)
+			rsp := &GeeRpcResponse{RequestId: req.RequestId}
 			rsp.SerializeType = msg.Header.SerializeType
 			rsp.CompressType = msg.Header.CompressType
 			serviceName := req.ServiceName
 			service, ok := s.serviceMap[serviceName]
 			if !ok {
-				rsp := &MsRpcResponse{}
+				rsp := &GeeRpcResponse{}
 				rsp.Code = 500
 				rsp.Msg = errors.New("no service found").Error()
 				conn.rspChan <- rsp
@@ -377,7 +390,7 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 			methodName := req.MethodName
 			method := reflect.ValueOf(service).MethodByName(methodName)
 			if method.IsNil() {
-				rsp := &MsRpcResponse{}
+				rsp := &GeeRpcResponse{}
 				rsp.Code = 500
 				rsp.Msg = errors.New("no service method found").Error()
 				conn.rspChan <- rsp
@@ -409,7 +422,7 @@ func (s *MsTcpServer) readHandle(conn *MsTcpConn) {
 	}
 }
 
-func (s *MsTcpServer) writeHandle(conn *MsTcpConn) {
+func (s *GeeTcpServer) writeHandle(conn *GeeTcpConn) {
 	select {
 	case rsp := <-conn.rspChan:
 		defer conn.conn.Close()
@@ -422,7 +435,18 @@ func (s *MsTcpServer) writeHandle(conn *MsTcpConn) {
 	}
 }
 
-func decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
+func (s *GeeTcpServer) SetRegister(registerType string, option register.Option) {
+	s.RegisterType = registerType
+	s.RegisterOption = option
+	if registerType == "nacos" {
+		s.RegisterCli = &register.GeeNacosRegister{}
+	}
+	if registerType == "etcd" {
+		s.RegisterCli = &register.GeeEtcdRegister{}
+	}
+}
+
+func decodeFrame(conn net.Conn) (*GeeRpcMessage, error) {
 	// 1+1+4+1+1+1+8=17
 	headers := make([]byte, 17)
 	_, err := io.ReadFull(conn, headers)
@@ -447,7 +471,7 @@ func decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 	// 请求id
 	requestId := int64(binary.BigEndian.Uint32(headers[9:]))
 
-	msg := &MsRpcMessage{
+	msg := &GeeRpcMessage{
 		Header: &Header{},
 	}
 	msg.Header.MagicNumber = mn
@@ -488,7 +512,7 @@ func decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 			}
 			msg.Data = req
 		} else {
-			req := &MsRpcRequest{}
+			req := &GeeRpcRequest{}
 			err := serializer.DeSerialize(body, req)
 			if err != nil {
 				return nil, err
@@ -506,7 +530,7 @@ func decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 			}
 			msg.Data = rsp
 		} else {
-			rsp := &MsRpcResponse{}
+			rsp := &GeeRpcResponse{}
 			err := serializer.DeSerialize(body, rsp)
 			if err != nil {
 				return nil, err
@@ -537,16 +561,17 @@ func loadCompress(compressType CompressType) CompressInterface {
 	return nil
 }
 
-type MsRpcClient interface {
+type GeeRpcClient interface {
 	Connect() error
 	Invoke(context context.Context, serviceName string, methodName string, args []any) (any, error)
 	Close() error
 }
 
-type MsTcpClient struct {
+type GeeTcpClient struct {
 	conn        net.Conn
 	option      TcpClientOption
 	ServiceName string
+	RegisterCli register.GeeRegister
 }
 type TcpClientOption struct {
 	Retries           int
@@ -556,6 +581,8 @@ type TcpClientOption struct {
 	Host              string
 	Port              int
 	RegisterType      string
+	RegisterOption    register.Option
+	RegisterCli       register.GeeRegister
 }
 
 var DefaultOption = TcpClientOption{
@@ -567,11 +594,29 @@ var DefaultOption = TcpClientOption{
 	CompressType:      Gzip,
 }
 
-func NewTcpClient(option TcpClientOption) *MsTcpClient {
-	return &MsTcpClient{option: option}
+func NewTcpClient(option TcpClientOption) *GeeTcpClient {
+	return &GeeTcpClient{option: option}
 }
 
-func (c *MsTcpClient) Close() error {
+func (c *GeeTcpClient) Connect() error {
+	var addr string
+	err := c.RegisterCli.CreateCli(c.option.RegisterOption)
+	if err != nil {
+		panic(err)
+	}
+	addr, err = c.RegisterCli.GetValue(c.ServiceName)
+	if err != nil {
+		panic(err)
+	}
+	conn, err := net.DialTimeout("tcp", addr, c.option.ConnectionTimeout)
+	if err != nil {
+		return err
+	}
+	c.conn = conn
+	return nil
+}
+
+func (c *GeeTcpClient) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()
 	}
@@ -580,9 +625,9 @@ func (c *MsTcpClient) Close() error {
 
 var reqId int64
 
-func (c *MsTcpClient) Invoke(ctx context.Context, serviceName string, methodName string, args []any) (any, error) {
+func (c *GeeTcpClient) Invoke(ctx context.Context, serviceName string, methodName string, args []any) (any, error) {
 	// 包装 request对象 编码 发送即可
-	req := &MsRpcRequest{}
+	req := &GeeRpcRequest{}
 	req.RequestId = atomic.AddInt64(&reqId, 1)
 	req.ServiceName = serviceName
 	req.MethodName = methodName
@@ -647,16 +692,16 @@ func (c *MsTcpClient) Invoke(ctx context.Context, serviceName string, methodName
 	if err != nil {
 		return nil, err
 	}
-	rspChan := make(chan *MsRpcResponse)
+	rspChan := make(chan *GeeRpcResponse)
 	go c.readHandle(rspChan)
 	rsp := <-rspChan
 	return rsp, nil
 }
 
-func (c *MsTcpClient) readHandle(rspChan chan *MsRpcResponse) {
+func (c *GeeTcpClient) readHandle(rspChan chan *GeeRpcResponse) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println("MsTcpClient readHandle recover: ", err)
+			log.Println("GeeTcpClient readHandle recover: ", err)
 			c.conn.Close()
 		}
 	}()
@@ -664,7 +709,7 @@ func (c *MsTcpClient) readHandle(rspChan chan *MsRpcResponse) {
 		msg, err := decodeFrame(c.conn)
 		if err != nil {
 			log.Println("未解析出任何数据")
-			rsp := &MsRpcResponse{}
+			rsp := &GeeRpcResponse{}
 			rsp.Code = 500
 			rsp.Msg = err.Error()
 			rspChan <- rsp
@@ -676,11 +721,11 @@ func (c *MsTcpClient) readHandle(rspChan chan *MsRpcResponse) {
 				rsp := msg.Data.(*Response)
 				asInterface := rsp.Data.AsInterface()
 				marshal, _ := json.Marshal(asInterface)
-				rsp1 := &MsRpcResponse{}
+				rsp1 := &GeeRpcResponse{}
 				json.Unmarshal(marshal, rsp1)
 				rspChan <- rsp1
 			} else {
-				rsp := msg.Data.(*MsRpcResponse)
+				rsp := msg.Data.(*GeeRpcResponse)
 				rspChan <- rsp
 			}
 			return
@@ -688,7 +733,7 @@ func (c *MsTcpClient) readHandle(rspChan chan *MsRpcResponse) {
 	}
 }
 
-func (c *MsTcpClient) decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
+func (c *GeeTcpClient) decodeFrame(conn net.Conn) (*GeeRpcMessage, error) {
 	// 1+1+4+1+1+1+8=17
 	headers := make([]byte, 17)
 	_, err := io.ReadFull(conn, headers)
@@ -713,7 +758,7 @@ func (c *MsTcpClient) decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 	// 请求id
 	requestId := int64(binary.BigEndian.Uint32(headers[9:]))
 
-	msg := &MsRpcMessage{
+	msg := &GeeRpcMessage{
 		Header: &Header{},
 	}
 	msg.Header.MagicNumber = mn
@@ -746,7 +791,7 @@ func (c *MsTcpClient) decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 		return nil, errors.New("no serializer")
 	}
 	if MessageType(messageType) == msgRequest {
-		req := &MsRpcRequest{}
+		req := &GeeRpcRequest{}
 		err := serializer.DeSerialize(body, req)
 		if err != nil {
 			return nil, err
@@ -755,7 +800,7 @@ func (c *MsTcpClient) decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 		return msg, nil
 	}
 	if MessageType(messageType) == msgResponse {
-		rsp := &MsRpcResponse{}
+		rsp := &GeeRpcResponse{}
 		err := serializer.DeSerialize(body, rsp)
 		if err != nil {
 			return nil, err
@@ -766,11 +811,41 @@ func (c *MsTcpClient) decodeFrame(conn net.Conn) (*MsRpcMessage, error) {
 	return nil, errors.New("no message type")
 }
 
-type MsTcpClientProxy struct {
-	client *MsTcpClient
+type GeeTcpClientProxy struct {
+	client *GeeTcpClient
 	option TcpClientOption
 }
 
-func NewMsTcpClientProxy(option TcpClientOption) *MsTcpClientProxy {
-	return &MsTcpClientProxy{option: option}
+func NewGeeTcpClientProxy(option TcpClientOption) *GeeTcpClientProxy {
+	return &GeeTcpClientProxy{option: option}
+}
+func (p *GeeTcpClientProxy) Call(ctx context.Context, serviceName string, methodName string, args []any) (any, error) {
+	client := NewTcpClient(p.option)
+	client.ServiceName = serviceName
+	if p.option.RegisterType == "nacos" {
+		client.RegisterCli = &register.GeeNacosRegister{}
+	}
+	if p.option.RegisterType == "etcd" {
+		client.RegisterCli = &register.GeeEtcdRegister{}
+	}
+	p.client = client
+	err := client.Connect()
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < p.option.Retries; i++ {
+		result, err := client.Invoke(ctx, serviceName, methodName, args)
+		if err != nil {
+			if i >= p.option.Retries-1 {
+				log.Println(errors.New("already retry all time"))
+				client.Close()
+				return nil, err
+			}
+			// 睡眠一小会
+			continue
+		}
+		client.Close()
+		return result, nil
+	}
+	return nil, errors.New("retry time is 0")
 }
