@@ -132,7 +132,10 @@ func (c *GeeHttpClientSession) responseHandle(request *http.Request) ([]byte, er
 		}
 	}
 	return body, nil
+}
 
+func (c *GeeHttpClient) NewSession() *GeeHttpClientSession {
+	return &GeeHttpClientSession{c, nil}
 }
 
 func (c *GeeHttpClient) toValues(args map[string]any) string {
