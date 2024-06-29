@@ -21,12 +21,14 @@
 ## 组成
 
 
+![Gee](doc/功能结构树.png)
+
 
 ### 1. 路由
 
 当我们需要访问服务提供的资源时，我们需要使用类似这样的请求方式：
 
-~~~go
+~~~
 GET http://localhost:8080/api/getUser?id=1
 POST http://localhost:8080/api/updateUser
 ~~~
